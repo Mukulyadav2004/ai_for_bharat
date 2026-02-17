@@ -17,7 +17,7 @@ The architecture addresses three key design challenges:
 
 **API-Based RAG**: Leverages internal data APIs rather than text-to-SQL, trading flexibility for higher accuracy and robustness (no syntax errors, reduced hallucinations).
 
-**Parallel Execution with Early Termination**: Both worker agents start concurrently, with the incorrect branch terminated early after routing completes, trading compute cost for latency reduction.
+**Parallel Execution with Early Termination**: The system performs parallel execution at two levels. First, OOD Detection and Agent Routing run concurrently within the Manager Agent to reduce critical path latency. After validation, both Worker Agents are initiated speculatively in parallel, and the incorrect branch is terminated early once routing is finalized, trading compute cost for lower end-to-end latency.
 
 **Domain-Aware Knowledge Injection**: Insight Generator dynamically injects domain-specific knowledge, prompts, and few-shot examples based on query classification.
 
@@ -79,28 +79,80 @@ The Manager Agent orchestrates the entire system with three main components:
    - Processing: Inject temporal context, clarify ambiguities
    - Output: Augmented query with explicit time ranges and context
    - Purpose: Reduce ambiguity for downstream LLM calls
+  
+4. **Response Guardrails** (Safety & Policy Enforcement Layer)
+   - Input: Worker Agent response (Data Presenter or Insight Generator)
+   - Processing: Evaluate output for PII leakage, toxic content, and policy violations using rule-based checks and model-based classifiers
+   - Decision: Allow, modify (sanitize), or reject response based on compliance results
+   - Output: Safe, policy-compliant response returned to seller
+   - Purpose: Ensure security, privacy protection, and adherence to system policies before final delivery
 
 ### Worker Agent Architecture
 
 ```mermaid
 graph LR
-    subgraph Data Presenter Agent
-        DWP[Data Workflow Planner<br/>LLM-based]
-        DWP --> TaskDecomp[Task Decomposition<br/>CoT + Few-shot]
-        TaskDecomp --> APISelect[API/Function Selection<br/>Schema Linking]
-        APISelect --> SlotFill[Payload Generation<br/>Slot Filling]
-        SlotFill --> DWE[Data Workflow Executor]
-        DWE --> PostProc[Post-Processing<br/>Reformat, Rename, Filter]
-        PostProc --> GenDP[Generation<br/>ICL + Few-shot]
+
+%% =========================
+%% DATA PRESENTER AGENT
+%% =========================
+
+subgraph Data_Presenter_Agent
+
+    %% Planner
+    subgraph DP_Planner["Data Workflow Planner - LLM Call"]
+        DP_Task[Task Decomposition & Planning]
+        DP_API[API / Function Selection]
+        DP_Input[Input Formulation]
     end
-    
-    subgraph Insight Generator Agent
-        DWE2[Data Workflow Executor<br/>LLM-based]
-        DWE2 --> DomainRoute[Domain-Aware Routing<br/>Few-shot Classifier]
-        DomainRoute --> Analytics[Analytical Analysis<br/>Time Series, Benchmarks]
-        Analytics --> Knowledge[Domain Knowledge Injection]
-        Knowledge --> GenIG[Generation<br/>ICL + CoT + Domain Examples]
+
+    %% Executor
+    subgraph DP_Executor["Data Workflow Executor"]
+        DP_Retrieve[Retrieval via API]
+        DP_Function[Function Execution]
+        DP_Post[Post Processing]
     end
+
+    %% Generation
+    subgraph DP_Generation["Generation - LLM Call"]
+        DP_Gen[Standard Prompting]
+    end
+
+    %% Flow
+    DP_Task --> DP_API --> DP_Input --> DP_Retrieve
+    DP_Retrieve --> DP_Function --> DP_Post --> DP_Gen
+
+end
+
+
+%% =========================
+%% INSIGHT GENERATOR AGENT
+%% =========================
+
+subgraph Insight_Generator_Agent
+
+    %% Planner
+    subgraph IG_Planner["Data Workflow Planner - LLM Call"]
+        IG_Task[Task Decomposition & Planning]
+        IG_Domain[Domain-Aware Routing]
+    end
+
+    %% Executor
+    subgraph IG_Executor["Data Workflow Executor"]
+        IG_Retrieve[Retrieval via API]
+        IG_Function[Function Execution]
+        IG_Analytics[Analytical Tools Calling]
+    end
+
+    %% Generation
+    subgraph IG_Generation["Generation - LLM Call"]
+        IG_Gen[Domain-Aware Insight Generation]
+    end
+
+    %% Flow
+    IG_Task --> IG_Domain --> IG_Retrieve
+    IG_Retrieve --> IG_Function --> IG_Analytics --> IG_Gen
+
+end
 ```
 
 ## Components and Interfaces
